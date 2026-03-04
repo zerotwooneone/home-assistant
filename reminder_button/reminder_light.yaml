@@ -165,7 +165,6 @@ light:
             static int current_idx = 0;
             std::string payload = id(ha_reminder_payload).state;
             
-            // 1. Split comma-separated hex strings
             std::vector<std::string> colors;
             size_t pos = 0;
             while ((pos = payload.find(",")) != std::string::npos) {
@@ -174,23 +173,23 @@ light:
             }
             if (!payload.empty()) colors.push_back(payload);
             
-            // 2. Safety exit
             if (colors.empty() || colors[0] == "idle") return;
             
-            // 3. Increment through up to 4 colors
             current_idx = current_idx % colors.size();
             std::string hex = colors[current_idx];
             
-            // 4. Convert Hex String to RGBW integers
-            // Handles both RRGGBB and RRGGBBAA
-            long number = strtol(hex.c_str(), nullptr, 16);
-            int r, g, b, w;
+            // USE UNSIGNED LONG to prevent sign-bit issues
+            unsigned long number = strtoul(hex.c_str(), nullptr, 16);
+            int r = 0, g = 0, b = 0, w = 0;
+
             if (hex.length() >= 8) {
+                // RRGGBBAA: Red is at the top (bits 24-31)
                 r = (number >> 24) & 0xFF;
                 g = (number >> 16) & 0xFF;
                 b = (number >> 8) & 0xFF;
                 w = number & 0xFF;
             } else {
+                // RRGGBB: Red is at bits 16-23
                 r = (number >> 16) & 0xFF;
                 g = (number >> 8) & 0xFF;
                 b = number & 0xFF;
