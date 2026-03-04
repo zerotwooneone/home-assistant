@@ -1,0 +1,21 @@
+# --- Sensitive Information ---
+secrets.yaml
+
+# --- ESPHome Build Artifacts ---
+# These folders contain compiled binaries and temporary build files.
+# They are large and can be regenerated at any time with 'esphome run'.
+.esphome/
+.temp/
+build/
+
+# --- Python Environment ---
+# If you are using a virtual environment (like venv) to run ESPHome.
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# --- OS / Editor Specific ---
+.DS_Store
+.vscode/
+.idea/

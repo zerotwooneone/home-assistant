@@ -1,0 +1,201 @@
+esphome:
+  name: reminder-light
+  friendly_name: Reminder Light
+  on_boot:
+    priority: -10 # Wait for Wi-Fi and API to be fully stable
+    then:
+      - homeassistant.event:
+          event: esphome.reminder_light_boot
+
+esp32:
+  board: m5stack-atom
+  framework:
+    type: arduino
+
+# Enable logging over the network
+logger:
+
+# Enable the Home Assistant API
+api:
+  # Leaving encryption blank for now to make the first flash perfectly seamless. 
+  # You can generate and add an encryption key later if you want strict security.
+
+# Allow Over-The-Air updates
+#ota:
+#  - platform: esphome
+
+# Your Wi-Fi credentials
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Fallback hotspot in case it ever loses your Wi-Fi
+  ap:
+    ssid: "Reminder-Light-Fallback"
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+# --------------------------------------------------------
+# HOME ASSISTANT DATA IMPORT
+# --------------------------------------------------------
+text_sensor:
+  - platform: homeassistant
+    id: ha_reminder_payload
+    entity_id: sensor.active_reminders
+    attribute: hex_payload
+    on_value:
+      then:
+        - if:
+            condition:
+              # Stop the effect and kill the light if state is idle
+              lambda: 'return x == "idle" || x == "";'
+            then:
+              - light.turn_off: reminder_led
+            else:
+              # Start the local flashing loop
+              - light.turn_on:
+                  id: reminder_led
+                  effect: "Edge Flasher"
+
+# --------------------------------------------------------
+# ATOM LITE HARDWARE CONFIGURATION
+# --------------------------------------------------------
+
+# The Atom Lite built-in button (the entire top face)
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: 39
+      inverted: true
+    name: "Reminder Button"
+    id: reminder_button
+
+    # Visual Feedback: Flash off briefly at 4s so user knows to release
+    on_press:
+      then:
+        - delay: 4s
+        - if:
+            condition:
+              binary_sensor.is_on: reminder_button
+            then:
+              - light.turn_off: reminder_led
+              - delay: 100ms
+              - light.turn_on: 
+                  id: reminder_led
+                  effect: "Edge Flasher"
+
+    on_multi_click:
+      # 1. Regular Press (Single Click)
+      - timing:
+          - ON for at most 0.5s
+          - OFF for at least 0.5s
+        then:
+          - homeassistant.event:
+              event: esphome.atom_button_action
+              data:
+                click_type: "single"
+
+      # 2. Double Click
+      - timing:
+          - ON for at most 0.5s
+          - OFF for at most 0.5s
+          - ON for at most 0.5s
+          - OFF for at least 0.5s
+        then:
+          - homeassistant.event:
+              event: esphome.atom_button_action
+              data:
+                click_type: "double"
+
+      # 3. Triple Click
+      - timing:
+          - ON for at most 0.5s
+          - OFF for at most 0.5s
+          - ON for at most 0.5s
+          - OFF for at most 0.5s
+          - ON for at most 0.5s
+          - OFF for at least 0.5s
+        then:
+          - homeassistant.event:
+              event: esphome.atom_button_action
+              data:
+                click_type: "triple"
+
+      # 4. Long Press (~4 seconds)
+      # Note: This triggers when you RELEASE the button between 4 and 9 seconds.
+      # It must wait for the release, otherwise it wouldn't know if you were going for 10 seconds.
+      - timing:
+          - ON for 4.0s to 9.0s
+          - OFF for at least 0.1s
+        then:
+          - homeassistant.event:
+              event: esphome.atom_button_action
+              data:
+                click_type: "long_4s"
+
+      # 5. Super Long Press (~10 seconds)
+      # Note: Because no other sequence asks for a press longer than 10 seconds, 
+      # this will fire the precise millisecond you hit the 10-second mark (no release required).
+      - timing:
+          - ON for at least 10.0s
+        then:
+          # 1. Attempt to tell Home Assistant it was pressed
+          - homeassistant.event:
+              event: esphome.atom_button_action
+              data:
+                click_type: "super_long_10s"
+          # 2. Force the light off locally regardless of server state
+          - light.turn_off: reminder_led
+
+# The Atom Lite built-in RGB LED
+light:
+  - platform: esp32_rmt_led_strip
+    pin: 27
+    num_leds: 1
+    chipset: SK6812
+    rgb_order: GRB
+    name: "Reminder Light"
+    id: reminder_led
+    effects:
+      - addressable_lambda:
+          name: "Edge Flasher"
+          update_interval: 2s
+          lambda: |-
+            static int current_idx = 0;
+            std::string payload = id(ha_reminder_payload).state;
+            
+            // 1. Split comma-separated hex strings
+            std::vector<std::string> colors;
+            size_t pos = 0;
+            while ((pos = payload.find(",")) != std::string::npos) {
+                colors.push_back(payload.substr(0, pos));
+                payload.erase(0, pos + 1);
+            }
+            if (!payload.empty()) colors.push_back(payload);
+            
+            // 2. Safety exit
+            if (colors.empty() || colors[0] == "idle") return;
+            
+            // 3. Increment through up to 4 colors
+            current_idx = current_idx % colors.size();
+            std::string hex = colors[current_idx];
+            
+            // 4. Convert Hex String to RGBW integers
+            // Handles both RRGGBB and RRGGBBAA
+            long number = strtol(hex.c_str(), nullptr, 16);
+            int r, g, b, w;
+            if (hex.length() >= 8) {
+                r = (number >> 24) & 0xFF;
+                g = (number >> 16) & 0xFF;
+                b = (number >> 8) & 0xFF;
+                w = number & 0xFF;
+            } else {
+                r = (number >> 16) & 0xFF;
+                g = (number >> 8) & 0xFF;
+                b = number & 0xFF;
+                w = 0;
+            }
+            
+            it.all() = Color(r, g, b, w);
+            current_idx++;
